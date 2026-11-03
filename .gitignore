@@ -17,6 +17,6 @@ android/app/src/main/jniLibs/
 *.log
 
 # --- Harness: fixtures live (payloads reales con datos personales — nunca al repo) ---
+# anclado a la raíz: fixtures/ de tests de xcore SÍ se commitean
 /fixtures/
-fixtures/
 .xctl/
