@@ -46,8 +46,8 @@ fn unum(v: &Value, path: &[&str]) -> Option<u64> {
         .or_else(|| x.as_str().and_then(|s| s.parse().ok()))
 }
 
-fn ubool(v: &Value, path: &[&str]) -> bool {
-    at(v, path).as_bool().unwrap_or(false)
+fn bval(v: &Value, path: &[&str]) -> Option<bool> {
+    at(v, path).as_bool()
 }
 
 /// `Sat Oct 17 18:11:27 +0000 2026` → ms epoch (UTC; sin chrono).
@@ -142,9 +142,9 @@ pub fn user_from_result(r: &Value) -> Result<User> {
         created_at: sstr(r, &["core", "created_at"])
             .or_else(|| sstr(r, &["legacy", "created_at"]))
             .unwrap_or_default(),
-        is_blue_verified: ubool(r, &["is_blue_verified"])
-            .or_else(|| at(r, &["verification", "verified"]).as_bool())
-            .or_else(|| at(r, &["legacy", "verified"]).as_bool())
+        is_blue_verified: bval(r, &["is_blue_verified"])
+            .or_else(|| bval(r, &["verification", "verified"]))
+            .or_else(|| bval(r, &["legacy", "verified"]))
             .unwrap_or(false),
     };
     Ok(user)
@@ -189,7 +189,8 @@ fn media_from(m: &Value) -> Option<Media> {
         (media_url, 0)
     } else {
         let vi = at(m, &["video_info"]);
-        let best = best_mp4(vi).unwrap_or(media_url); // fallback al thumb si no hay variantes
+        // ojo: best_mp4 recibe el ARRAY variants, no el objeto video_info
+        let best = best_mp4(at(vi, &["variants"])).unwrap_or(media_url); // fallback thumb sin variantes
         let dur = unum(vi, &["duration_millis"]).unwrap_or(0);
         (best, dur)
     };
@@ -226,7 +227,7 @@ fn tweet_from_result(r: &Value) -> Option<Tweet> {
         if !rt_inner.is_null() && at(rt_inner, &["legacy"]).as_object().is_some() {
             (rt_inner, true)
         } else {
-            (real, ubool(legacy, &["retweeted"]))
+            (real, bval(legacy, &["retweeted"]).unwrap_or(false))
         };
 
     let mut author = User::default();
@@ -244,21 +245,37 @@ fn tweet_from_result(r: &Value) -> Option<Tweet> {
     }
 
     let screen = author.screen_name.clone();
+    // Para RT usamos datos del tweet interno (texto/fecha/contadores del
+    // original); el prefijo `RT @x: ` llega en el payload 2026 incluso
+    // anidado — la UI indicará "reposteado", no lo necesitamos.
+    let src = if is_rt {
+        at(content_node, &["legacy"])
+    } else {
+        legacy
+    };
+    let mut text = sstr(src, &["full_text"]).unwrap_or_default();
+    if is_rt {
+        if let Some(rest) = text.strip_prefix("RT @") {
+            if let Some(idx) = rest.find(": ") {
+                text = rest[idx + 2..].to_string();
+            }
+        }
+    }
     Some(Tweet {
         // conservamos el id OUTER para acción sobre lo visible (like/repost)
         id: id.clone(),
         author,
-        text: sstr(legacy, &["full_text"]).unwrap_or_default(),
-        created_at_ms: sstr(legacy, &["created_at"])
+        text,
+        created_at_ms: sstr(src, &["created_at"])
             .and_then(|s| parse_x_epoch(&s))
             .unwrap_or(0),
-        reply_to_id: sstr(legacy, &["in_reply_to_status_id_str"]),
+        reply_to_id: sstr(src, &["in_reply_to_status_id_str"]),
         media,
-        liked: ubool(legacy, &["favorited"]),
-        reposted: ubool(legacy, &["retweeted"]),
-        like_count: unum(legacy, &["favorite_count"]).unwrap_or(0),
-        repost_count: unum(legacy, &["retweet_count"]).unwrap_or(0),
-        reply_count: unum(legacy, &["reply_count"]).unwrap_or(0),
+        liked: bval(legacy, &["favorited"]).unwrap_or(false),
+        reposted: bval(legacy, &["retweeted"]).unwrap_or(false),
+        like_count: unum(src, &["favorite_count"]).unwrap_or(0),
+        repost_count: unum(src, &["retweet_count"]).unwrap_or(0),
+        reply_count: unum(src, &["reply_count"]).unwrap_or(0),
         is_retweet: is_rt,
         permalink: format!(
             "https://x.com/{}/status/{}",
@@ -290,7 +307,7 @@ fn collect_tweet_nodes<'a>(entries: impl Iterator<Item = &'a Value>, out: &mut V
 }
 
 /// Instructions crudas (`instructions` array) → tweets dedup por id.
-pub fn tweets_from_instructions<'a>(v: &'a Value) -> Result<Vec<Tweet>> {
+pub fn tweets_from_instructions(v: &Value) -> Result<Vec<Tweet>> {
     let ins = match v.as_array() {
         Some(a) => a,
         None => {
@@ -309,13 +326,12 @@ pub fn tweets_from_instructions<'a>(v: &'a Value) -> Result<Vec<Tweet>> {
                     collect_tweet_nodes(ents.iter(), &mut nodes);
                 }
             }
-            Some("TimelinePinEntry") => {
+            Some("TimelinePinEntry")
                 // pin: objeto `entry` (el mismo tweet suele repetirse en AddEntries)
-                if !pin_inserted {
+                if !pin_inserted => {
                     pin_inserted = true;
                     collect_tweet_nodes([at(i, &["entry"])].iter().copied(), &mut nodes);
                 }
-            }
             _ => {}
         }
     }
@@ -371,10 +387,10 @@ mod tests {
     #[test]
     fn parse_x_epoch_basic() {
         let ms = parse_x_epoch("Sat Oct 17 18:11:27 +0000 2026").unwrap();
-        // comprobamos contra un caso referencial conocido: Wed Oct 10 20:19:24 2018 = 1539205164000
+        // caso referencial: Wed Oct 10 20:19:24 2018 = 1539202764000
         assert_eq!(
             parse_x_epoch("Wed Oct 10 20:19:24 +0000 2018").unwrap(),
-            1_539_205_164_000
+            1_539_202_764_000
         );
         assert_eq!(ms % 1000, 0);
         assert!(ms > 1_500_000_000_000);
@@ -437,17 +453,25 @@ mod tests {
             "esperaba >=14 tweets, salieron {}",
             tweets.len()
         );
-        // primer entry: RT → preferimos contenido del tweet interno
+        // el PRIMERO es el entry fijado (pin) del dueño del timeline
         let first = &tweets[0];
-        assert!(!first.id.is_empty());
-        assert!(first.is_retweet, "el primer fixture es RT");
+        assert_eq!(first.id, "2019881223666233717");
+        assert!(!first.is_retweet);
         assert!(
-            first.text.starts_with("Exhibit spotlight"),
-            "texto resumido del RT interno: {}",
+            first.text.starts_with("Officially launching"),
+            "texto pin: {}",
             first.text
         );
+        // RT real: entrada AddEntries[0] con retweeted_status_result
+        let rt = tweets
+            .iter()
+            .find(|t| t.id == "2111520482914877569")
+            .expect("el timeline tiene el tweet RT");
+        assert!(rt.is_retweet);
         assert!(
-            first.author.screen_name == "michael_rosinsky" || !first.author.screen_name.is_empty()
+            rt.text.starts_with("Exhibit spotlight"),
+            "texto del tweet interno: {}",
+            rt.text
         );
         // sin contadores negativos y datos presentes
         assert!(tweets.iter().all(|t| t.like_count < u64::MAX));
@@ -456,11 +480,10 @@ mod tests {
     #[test]
     fn tweet_video_media_variants() {
         let v: Value = serde_json::from_str(FX_VIDEO).unwrap();
-        let mut best_url = String::new();
         // buscamos el primer tweet con video en el fixture de TweetDetail
         let tw = find_first_video(&v).expect("fixture debe tener video");
         let mut media = Vec::new();
-        if let Some(list) = at(&tw, &["legacy", "extended_entities", "media"]).as_array() {
+        if let Some(list) = at(tw, &["legacy", "extended_entities", "media"]).as_array() {
             for m in list {
                 if let Some(md) = media_from(m) {
                     media.push(md);
@@ -473,17 +496,15 @@ mod tests {
             MediaKind::Video => {
                 assert!(m0.url.contains("video.twimg.com"));
                 assert!(m0.duration_ms > 0);
-                assert!(
-                    best_url.is_empty() && m0.url.ends_with(".mp4"),
-                    "mejor variante mp4"
-                );
+                // el endpoint mp4 viene con query (?tag=…) — no termina en ".mp4"
+                assert!(m0.url.contains(".mp4"), "mejor variante mp4: {}", m0.url);
             }
             _ => panic!("esperaba video"),
         }
     }
 
     /// hallucination guard: no re-parsear el fixture una vez por aserción.
-    fn find_first_video<'a>(v: &'a Value) -> Option<&'a Value> {
+    fn find_first_video(v: &Value) -> Option<&Value> {
         let mut stack = vec![v];
         while let Some(n) = stack.pop() {
             if let Some(list) = n.as_array() {
@@ -494,12 +515,12 @@ mod tests {
                 for (k, val) in obj {
                     if k == "tweet_results" && !val.is_null() {
                         let r = at(val, &["result"]);
-                        if !at(
-                            r,
-                            &["legacy", "extended_entities", "media", "0", "video_info"],
-                        )
-                        .is_null()
-                        {
+                        let has_video = at(r, &["legacy", "extended_entities", "media"])
+                            .as_array()
+                            .and_then(|a| a.first())
+                            .map(|m| !at(m, &["video_info"]).is_null())
+                            .unwrap_or(false);
+                        if has_video {
                             return Some(r);
                         }
                     }
