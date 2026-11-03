@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "note": "queryId rotan; los valores aquí son semilla. P6 añade extractor del bundle main.js de x.com para refrescar este archivo en caliente.",
+  "ops": {
+    "Viewer": {
+      "kind": "GET",
+      "path": "https://x.com/i/api/graphql/%QUERY_ID%/Viewer",
+      "query_id": null
+    },
+    "UserByScreenName": {
+      "kind": "GET",
+      "path": "https://x.com/i/api/graphql/%QUERY_ID%/UserByScreenName",
+      "query_id": null
+    },
+    "UserTweets": {
+      "kind": "GET",
+      "path": "https://x.com/i/api/graphql/%QUERY_ID%/UserTweets",
+      "query_id": null
+    },
+    "HomeTimeline": {
+      "kind": "GET",
+      "path": "https://x.com/i/api/graphql/%QUERY_ID%/HomeTimeline",
+      "query_id": null
+    },
+    "HomeLatestTimeline": {
+      "kind": "GET",
+      "path": "https://x.com/i/api/graphql/%QUERY_ID%/HomeLatestTimeline",
+      "query_id": null
+    }
+  },
+  "features_union": {
+    "rweb_tipjar_consumption_enabled": true,
+    "responsive_web_graphql_exclude_directive_enabled": true,
+    "verified_phone_label_enabled": false,
+    "creator_subscriptions_tweet_preview_api_enabled": true,
+    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": false,
+    "responsive_web_graphql_timeline_navigation_enabled": true,
+    "responsive_web_enhance_cards_enabled": false,
+    "standardized_nudges_misinfo": true,
+    "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": false,
+    "longform_notetweets_inline_media_enabled": true,
+    "longform_notetweets_rich_text_read_enabled": true,
+    "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled_v2": true
+  },
+  "headers": {
+    "bearer": "AAAAAAAAAAAAAAAAAAAAANRILgAAnA%3F...",
+    "note": "bearer público del cliente web; se completa en P1 con la cadena real verificada contra un live request"
+  }
+}
