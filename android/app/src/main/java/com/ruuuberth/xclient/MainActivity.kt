@@ -3,6 +3,10 @@ package com.ruuuberth.xclient
 import android.annotation.SuppressLint
 import android.os.Bundle
 import android.webkit.CookieManager
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
@@ -33,10 +37,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
-// UA de escritorio: x.com sirve web completa (evita el muro "instala el app")
-// y Google permite login web en este contexto la mayoría de las veces.
-private const val UA_DESKTOP =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+// Login móvil directo de x.com (el flow estándar que sirve el navegador
+// del teléfono); SIN spoof de UA — el WebView corre exactamente el JS que
+// su motor soporta (el spoof del draft rompía el render del login).
+private const val LOGIN_URL = "https://x.com/i/flow/login"
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -130,34 +134,64 @@ private fun WebViewLogin(onAuth: (String) -> Unit) {
         AndroidView(
             factory = { ctx ->
                 WebView(ctx).apply {
+                    val cm = CookieManager.getInstance()
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
-                    settings.userAgentString = UA_DESKTOP
-                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-                    webViewClient = object : WebViewClient() {
-                        override fun onPageFinished(view: WebView, url: String?) {
-                            val jar = CookieManager.getInstance().getCookie("https://x.com") ?: return
-                            val token = Regex("auth_token=([^;\\s]+)").find(jar)?.groupValues?.get(1) ?: return
-                            val csrf = Regex("ct0=([^;\\s]+)").find(jar)?.groupValues?.get(1) ?: ""
-                            if (inFlight) return
-                            inFlight = true
-                            scope.launch(Dispatchers.IO) {
-                                val r = runCatching { RustBridge.loginWithCookies("auth_token=$token; ct0=$csrf") }
-                                    .getOrElse { """{"ok":false,"error":"JNI: $it"}""" }
-                                val j = runCatching { JSONObject(r) }.getOrElse { JSONObject() }
-                                withContext(Dispatchers.Main) {
-                                    if (j.optBoolean("ok", false)) {
-                                        status = ""
-                                        onAuth(r)
-                                    } else {
-                                        inFlight = false
-                                        status = "Sesión rechazada: ${j.optString("error")}"
-                                    }
+                    settings.databaseEnabled = true
+                    // viewport móvil correcto (el draft: box media-fuera-de-pantalla)
+                    settings.useWideViewPort = true
+                    settings.loadWithOverviewMode = true
+                    // window.open de la web → navegar in-place
+                    settings.setSupportMultipleWindows(false)
+                    settings.javaScriptCanOpenWindowsAutomatically = true
+                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                    cm.setAcceptCookie(true)
+                    cm.setAcceptThirdPartyCookies(this, true)
+
+                    fun tryHarvest() {
+                        if (inFlight) return
+                        val jar = cm.getCookie("https://x.com") ?: return
+                        val token = Regex("auth_token=([^;\\s]+)").find(jar)?.groupValues?.get(1) ?: return
+                        val csrf = Regex("ct0=([^;\\s]+)").find(jar)?.groupValues?.get(1) ?: ""
+                        if (token.isEmpty()) return
+                        inFlight = true
+                        scope.launch(Dispatchers.IO) {
+                            val r = runCatching { RustBridge.loginWithCookies("auth_token=$token; ct0=$csrf") }
+                                .getOrElse { """{"ok":false,"error":"JNI: $it"}""" }
+                            val j = runCatching { JSONObject(r) }.getOrElse { JSONObject() }
+                            withContext(Dispatchers.Main) {
+                                if (j.optBoolean("ok", false)) {
+                                    status = ""
+                                    onAuth(r)
+                                } else {
+                                    inFlight = false
+                                    status = "Sesión rechazada: ${j.optString("error")}"
                                 }
                             }
                         }
                     }
-                    loadUrl("https://x.com/home")
+
+                    webViewClient = object : WebViewClient() {
+                        override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
+                            tryHarvest()
+                        }
+
+                        override fun onPageFinished(view: WebView, url: String?) {
+                            tryHarvest()
+                        }
+
+                        override fun onReceivedError(
+                            view: WebView,
+                            request: WebResourceRequest,
+                            error: WebResourceError,
+                        ) {
+                            if (request.isForMainFrame) {
+                                status = "error página: ${error.description} (${request.url})"
+                            }
+                        }
+                    }
+                    webChromeClient = WebChromeClient()
+                    loadUrl(LOGIN_URL)
                 }
             },
             update = {},

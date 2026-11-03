@@ -14,6 +14,7 @@
 pub mod endpoints;
 pub mod errors;
 pub mod graphql;
+pub mod mapper;
 pub mod models;
 pub mod session;
 
