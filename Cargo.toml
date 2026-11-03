@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = ["crates/xcore", "crates/x-jni"]
+
+[profile.release]
+strip = true
+opt-level = "s"
+lto = "thin"

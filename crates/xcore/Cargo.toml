@@ -1,0 +1,8 @@
+[package]
+name = "xcore"
+version = "0.1.0"
+edition = "2021"
+description = "Núcleo Rust: cliente GraphQL de X (Twitter), sesiones, media, caché"
+license = "MIT"
+
+[dependencies]
