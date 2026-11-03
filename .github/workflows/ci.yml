@@ -70,6 +70,13 @@ jobs:
         with:
           gradle-version: '9.8.2'
 
+      - name: Asegurar platforms/android-37 (determinista)
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          command -v sdkmanager >/dev/null 2>&1 && SDKM="$(command -v sdkmanager)"
+          yes | "$SDKM" --sdk_root="$ANDROID_HOME" "platforms;android-37" >/dev/null 2>&1 || true
+          ls "$ANDROID_HOME/platforms"
+
       - name: Gradle assembleDebug
         run: |
           cd android
