@@ -1360,6 +1360,8 @@ name = "x-jni"
 version = "0.1.0"
 dependencies = [
  "jni",
+ "serde_json",
+ "tokio",
  "xcore",
 ]
 

@@ -9,6 +9,10 @@ if [ ! -f android/local.properties ]; then
   exit 1
 fi
 
+# ring (TLS de reqwest) compila C/asm → Termux clang sirve para el target android.
+export CC_aarch64_linux_android="${CC_aarch64_linux_android:-clang}"
+export AR_aarch64_linux_android="${AR_aarch64_linux_android:-llvm-ar}"
+
 cargo build --target aarch64-linux-android --release -p x-jni
 mkdir -p android/app/src/main/jniLibs/arm64-v8a
 cp -f target/aarch64-linux-android/release/libxjni.so android/app/src/main/jniLibs/arm64-v8a/
