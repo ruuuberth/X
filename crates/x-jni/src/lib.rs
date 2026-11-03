@@ -17,12 +17,15 @@ use jni::sys::jstring;
 use jni::JNIEnv;
 use serde_json::{json, Value};
 use xcore::graphql::GqlClient;
+use xcore::login::{Driver, Outcome};
 use xcore::session::Session;
 use xcore::{version, APP_CODENAME};
 
 struct Core {
     dir: PathBuf,
     session: Mutex<Option<Session>>,
+    /// Flujo de password-login en curso (entre `loginStart` y `loginSubmitCode`).
+    login: Mutex<Option<Driver>>,
     rt: tokio::runtime::Runtime,
 }
 
@@ -90,6 +93,7 @@ pub extern "system" fn Java_com_ruuuberth_xclient_RustBridge_initCore(
     let core = Core {
         dir,
         session: Mutex::new(None),
+        login: Mutex::new(None),
         rt,
     };
     let _ = CORE.set(core); // si ya estaba (Activity recreada), conservamos el existente
@@ -200,4 +204,104 @@ pub extern "system" fn Java_com_ruuuberth_xclient_RustBridge_logout(
     *c.session.lock().unwrap() = None;
     let _ = fs::remove_file(c.session_path());
     reply(&mut env, json!({"ok": true}))
+}
+
+/// Login usuario+contraseña (flujo twscrape): arranca el flow de onboarding.
+/// Respuestas:
+/// - `{"ok":true, "session":{…}}`            → login completo (persistido)
+/// - `{"ok":true, "need":"email"|"email_code"|"two_factor"}` → pedir código
+///   al usuario; reanudar con `loginSubmitCode`.
+/// - `{"ok":false,"error":…}`                → credenciales/red/flow rechazado.
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_com_ruuuberth_xclient_RustBridge_loginStart(
+    mut env: JNIEnv,
+    _class: JClass,
+    username: JString,
+    password: JString,
+) -> jstring {
+    let user = read_jstr(&mut env, &username);
+    let pass = read_jstr(&mut env, &password);
+    let Some(c) = CORE.get() else {
+        return reply(
+            &mut env,
+            json!({"ok": false, "error": "core no inicializado; initCore primero"}),
+        );
+    };
+    if user.is_empty() || pass.is_empty() {
+        return reply(
+            &mut env,
+            json!({"ok": false, "error": "usuario y contraseña requeridos"}),
+        );
+    }
+
+    let mut driver = match Driver::new() {
+        Ok(d) => d,
+        Err(e) => return reply(&mut env, err_json(e)),
+    };
+    let out = c.rt.block_on(driver.start(user, pass));
+    settle_login(&mut env, c, driver, out)
+}
+
+/// Reanuda el flow tras el código intermedio (`need` de `loginStart`).
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_com_ruuuberth_xclient_RustBridge_loginSubmitCode(
+    mut env: JNIEnv,
+    _class: JClass,
+    code: JString,
+) -> jstring {
+    let code = read_jstr(&mut env, &code);
+    let Some(c) = CORE.get() else {
+        return reply(
+            &mut env,
+            json!({"ok": false, "error": "core no inicializado; initCore primero"}),
+        );
+    };
+    let Some(mut driver) = c.login.lock().unwrap().take() else {
+        return reply(
+            &mut env,
+            json!({"ok": false, "error": "sin flujo de login en curso (loginStart primero)"}),
+        );
+    };
+    if code.is_empty() {
+        // devolvemos el driver intacto (el flow sigue abierto para reintentar)
+        *c.login.lock().unwrap() = Some(driver);
+        return reply(&mut env, json!({"ok": false, "error": "código vacío"}));
+    }
+    let out = c.rt.block_on(driver.submit(&code));
+    settle_login(&mut env, c, driver, out)
+}
+
+/// Resultado común de start/submit: Success → persistir sesión; NeedCode →
+/// guarda el driver para reanudar; Err → descarta el driver (sin estado).
+#[allow(clippy::needless_pass_by_value)]
+fn settle_login(
+    env: &mut JNIEnv,
+    c: &Core,
+    driver: Driver,
+    out: Result<Outcome, xcore::errors::Error>,
+) -> jstring {
+    match out {
+        Ok(Outcome::Success(session)) => {
+            // el driver se dropea aquí: la password nunca persiste
+            *c.login.lock().unwrap() = None;
+            match c.persist(&session) {
+                Ok(()) => {
+                    *c.session.lock().unwrap() = Some(session.clone());
+                    reply(
+                        env,
+                        json!({"ok": true, "session": serde_json::to_value(&session).unwrap_or(Value::Null)}),
+                    )
+                }
+                Err(msg) => reply(env, json!({"ok": false, "error": msg})),
+            }
+        }
+        Ok(Outcome::NeedCode(kind)) => {
+            *c.login.lock().unwrap() = Some(driver);
+            reply(env, json!({"ok": true, "need": kind.as_str()}))
+        }
+        // el driver ya se consumió (submit): no hay estado que restaurar
+        Err(e) => reply(env, err_json(e)),
+    }
 }

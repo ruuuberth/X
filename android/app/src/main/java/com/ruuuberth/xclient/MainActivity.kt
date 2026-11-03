@@ -17,10 +17,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -88,26 +91,168 @@ private fun parseSession(raw: String): JSONObject? = runCatching {
 
 @Composable
 private fun LoginScreen(onLogged: (String) -> Unit) {
-    var useWebView by remember { mutableStateOf(true) }
+    var mode by remember { mutableStateOf(0) } // 0=contraseña (default), 1=navegador, 2=pegar
 
     Column(Modifier.fillMaxSize()) {
-        if (useWebView) {
-            WebViewLogin(onAuth = onLogged)
-            TextButton(
-                onClick = { useWebView = false },
-                modifier = Modifier.fillMaxWidth().padding(8.dp),
-            ) {
-                Text("Problemas con el navegador? Pegar cookies manual")
-            }
-        } else {
-            PasteLogin(onLogged = onLogged)
-            TextButton(
-                onClick = { useWebView = true },
-                modifier = Modifier.fillMaxWidth().padding(8.dp),
-            ) {
-                Text("Volver al navegador")
+        TabRow(selectedTabIndex = mode) {
+            Tab(selected = mode == 0, onClick = { mode = 0 }, text = { Text("Contraseña") })
+            Tab(selected = mode == 1, onClick = { mode = 1 }, text = { Text("Navegador") })
+            Tab(selected = mode == 2, onClick = { mode = 2 }, text = { Text("Pegar cookies") })
+        }
+        when (mode) {
+            1 -> WebViewLogin(onAuth = onLogged)
+            2 -> PasteLogin(onLogged = onLogged)
+            else -> PasswordLogin(onLogged = onLogged)
+        }
+    }
+}
+
+/**
+ * Login usuario+contraseña vía core Rust (flujo twscrape por subtasks).
+ * Los códigos intermedios (email / código del email / 2FA) se piden en un
+ * diálogo y reanudan el flow con `loginSubmitCode`. La contraseña jamás se
+ * persiste: vive solo dentro de la llamada al core.
+ */
+@Composable
+private fun PasswordLogin(onLogged: (String) -> Unit) {
+    var user by remember { mutableStateOf("") }
+    var pass by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var pending by remember { mutableStateOf<String?>(null) } // "email"|"email_code"|"two_factor"
+    var code by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
+
+    fun startLogin() {
+        if (busy) return
+        busy = true
+        error = ""
+        scope.launch(Dispatchers.IO) {
+            val r = runCatching { RustBridge.loginStart(user, pass) }
+                .getOrElse { """{"ok":false,"error":"JNI: $it"}""" }
+            val j = runCatching { JSONObject(r) }.getOrElse { JSONObject() }
+            withContext(Dispatchers.Main) {
+                busy = false
+                when {
+                    j.optBoolean("ok", false) && j.has("session") -> onLogged(r)
+                    j.optBoolean("ok", false) -> {
+                        code = ""
+                        pending = j.optString("need").ifEmpty { "email_code" }
+                    }
+                    else -> error = j.optString("error").ifEmpty { "login falló" }
+                }
             }
         }
+    }
+
+    fun submitCode() {
+        if (busy) return
+        busy = true
+        error = ""
+        scope.launch(Dispatchers.IO) {
+            val r = runCatching { RustBridge.loginSubmitCode(code) }
+                .getOrElse { """{"ok":false,"error":"JNI: $it"}""" }
+            val j = runCatching { JSONObject(r) }.getOrElse { JSONObject() }
+            withContext(Dispatchers.Main) {
+                busy = false
+                when {
+                    j.optBoolean("ok", false) && j.has("session") -> {
+                        pending = null
+                        onLogged(r)
+                    }
+                    else -> {
+                        error = j.optString("error").ifEmpty { "código rechazado" }
+                        code = ""
+                    }
+                }
+            }
+        }
+    }
+
+    // código intermedio pedido por el servidor
+    pending?.let { kind ->
+        val (title, hint) = when (kind) {
+            "email" -> "Verificación de cuenta" to "Ingresa el email de tu cuenta"
+            "two_factor" -> "Autenticación en dos pasos" to "Código de 6 dígitos de tu app authenticator"
+            else -> "Verificación de cuenta" to "Ingresa el código que te enviamos por email"
+        }
+        AlertDialog(
+            onDismissRequest = { if (!busy) pending = null },
+            title = { Text(title) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(hint, style = MaterialTheme.typography.bodySmall)
+                    if (error.isNotEmpty()) {
+                        Text(
+                            error,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = { code = it },
+                        singleLine = true,
+                        enabled = !busy,
+                        label = { Text(if (kind == "two_factor") "Código" else hint) },
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !busy && code.isNotBlank(),
+                    onClick = { submitCode() },
+                ) { Text(if (busy) "…" else "Continuar") }
+            },
+            dismissButton = {
+                TextButton(enabled = !busy, onClick = { pending = null }) { Text("Cancelar") }
+            },
+        )
+    }
+
+    Column(
+        Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Inicia sesión en X", style = MaterialTheme.typography.headlineSmall)
+        Text(
+            "Tu usuario y contraseña se usan solo para entrar; la app guarda únicamente las cookies de la sesión.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        OutlinedTextField(
+            value = user,
+            onValueChange = { user = it },
+            singleLine = true,
+            enabled = !busy,
+            label = { Text("Usuario, email o teléfono") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = pass,
+            onValueChange = { pass = it },
+            singleLine = true,
+            enabled = !busy,
+            label = { Text("Contraseña") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (error.isNotEmpty()) {
+            Text(
+                error,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        Button(
+            onClick = { startLogin() },
+            enabled = !busy && user.isNotBlank() && pass.isNotBlank(),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (busy) "Verificando…" else "Iniciar sesión")
+        }
+        Text(
+            "Si tu cuenta tiene 2FA o verificación por email, se pedirá el código en el paso siguiente.",
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 }
 
