@@ -75,17 +75,17 @@ jobs:
           cd android
           gradle :app:assembleDebug --stacktrace
 
-      - name: Empaquetar platforms/android-36 (recurso para builds locales nube-bloqueados)
+      - name: Empaquetar platforms/android-37 (recurso para builds locales nube-bloqueados)
         run: |
           cd "$ANDROID_HOME/platforms"
-          zip -qr "$RUNNER_TEMP/android-36-platform.zip" android-36
-          ls -lh "$RUNNER_TEMP/android-36-platform.zip"
+          zip -qr "$RUNNER_TEMP/android-37-platform.zip" android-37
+          ls -lh "$RUNNER_TEMP/android-37-platform.zip"
 
-      - name: Upload android-36-platform
+      - name: Upload android-37-platform
         uses: actions/upload-artifact@v4
         with:
-          name: android-36-platform
-          path: ${{ runner.temp }}/android-36-platform.zip
+          name: android-37-platform
+          path: ${{ runner.temp }}/android-37-platform.zip
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

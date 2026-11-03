@@ -14,14 +14,14 @@ Actions / Codespaces** cuando algo es demasiado pesado localmente.
 | Núcleo | Rust por JNI (JSON→JSON; UniFFI si se justifica) |
 | Multimedia | `MANAGE_EXTERNAL_STORAGE`, escritura directa a `/sdcard/Pictures/X` y `/Movies/X` |
 | Video | Player del sistema vía `ACTION_VIEW` + FileProvider (androidx) |
-| Build | N1 nativo Termux (cargo + aapt2 override) / N2 Actions / N3 Codespaces |
+| Build | **N2 CI** para APKs (la red del móvil limita CDN grandes a ~8KB/s) · N1 local solo para Rust/tests · N3 Codespaces interactivo |
 | Rama/CI | `develop` = default, `main` = producción; CI test -> artefacto APK debug |
 | Repo | Público (gh: `ruuuberth`) |
 
 ## Stack fijado (P0)
 
-- Kotlin 2.4.21 · AGP 9.5.0 · Gradle 9.8.2 (wrapper) · Compose BOM 2026.09.00
-- compileSdk 36 · minSdk 26 · targetSdk 36
+- Kotlin 2.4.21 · AGP 9.5.0 · Gradle 9.8.2 (runner/CI) · Compose BOM 2026.09.00
+- compileSdk 37 · minSdk 26 · targetSdk 36
 - Rust stable de Termux (`rust-std-aarch64-linux-android` ya instalado, sin rustup)
 - Mirror: `maven.aliyun.com` (Google/Gradle) — `dl.google.com/android/repository` está bloqueado en esta red
 
@@ -61,6 +61,6 @@ proyectos/X/
 
 ## Riesgos activos
 
-1. Red sin `dl.google.com/repository` → dependencias vía aliyun; `android.jar` via artefacto de CI (ver `scripts/fetch-platform.sh`).
-2. AGP 9.5 (built-in Kotlin) posible roce de DSL nuevo → fallback rápido a `org.jetbrains.kotlin.android` explícito si el build falla.
-3. queryIds GraphQL rotan → registry `endpoints.ron` + extractor del bundle JS (P6).
+1. Rede del móvil: ~8 KB/s hacia CDNs grandes → APKs y distros SIEMPRE desde CI/Codespace; `scripts/build.sh` local solo construye el `.so` de Rust.
+2. queryIds GraphQL rotan → registry `endpoints.ron` + extractor del bundle JS (P6).
+3. AGP 9.5 (built-in Kotlin) posible roce de DSL nuevo → fallback a `org.jetbrains.kotlin.android` explícito si falla el build.

@@ -23,7 +23,7 @@ plugins {
 
 android {
     namespace = "com.ruuuberth.xclient"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.ruuuberth.xclient"

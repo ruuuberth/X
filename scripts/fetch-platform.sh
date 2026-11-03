@@ -11,12 +11,12 @@ trap 'rm -rf "$TMP"' EXIT
 
 RUN_ID="$(cd "$ROOT" && gh run list --workflow=CI --branch=develop --state=success --limit 1 --json databaseId --jq '.[0].databaseId')"
 echo "usando run CI #$RUN_ID"
-gh run download "$RUN_ID" -n android-36-platform -D "$TMP"
+gh run download "$RUN_ID" -n android-37-platform -D "$TMP"
 
-[ -f "$TMP/android-36-platform.zip" ] || { ls -la "$TMP"; exit 1; }
-unzip -q "$TMP/android-36-platform.zip" -d "$TMP"
+[ -f "$TMP/android-37-platform.zip" ] || { ls -la "$TMP"; exit 1; }
+unzip -q "$TMP/android-37-platform.zip" -d "$TMP"
 
-[ -d "$SDK/platforms/android-36" ] || mv "$TMP/android-36" "$SDK/platforms/"
+[ -d "$SDK/platforms/android-37" ] || mv "$TMP/android-37" "$SDK/platforms/"
 
 cat > "$SDK/licenses/android-sdk-license" <<EOF
 8933bad161af4178b1185d1a37fbf41ea5269c55
