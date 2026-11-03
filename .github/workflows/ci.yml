@@ -85,7 +85,11 @@ jobs:
       - name: Empaquetar platforms/android-37 (recurso para builds locales nube-bloqueados)
         run: |
           cd "$ANDROID_HOME/platforms"
-          zip -qr "$RUNNER_TEMP/android-37-platform.zip" android-37
+          D=android-37
+          [ -d "$D" ] || D="$(find . -maxdepth 1 -type d -name 'android-37*' | head -1 | sed 's|^\./||')"
+          echo "empaquetando: $D"
+          [ -n "$D" ] && [ -d "$D" ] || { echo "no hay platform android-37*"; exit 1; }
+          zip -qr "$RUNNER_TEMP/android-37-platform.zip" "$D"
           ls -lh "$RUNNER_TEMP/android-37-platform.zip"
 
       - name: Upload android-37-platform

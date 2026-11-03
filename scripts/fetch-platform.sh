@@ -16,7 +16,9 @@ gh run download "$RUN_ID" -n android-37-platform -D "$TMP"
 [ -f "$TMP/android-37-platform.zip" ] || { ls -la "$TMP"; exit 1; }
 unzip -q "$TMP/android-37-platform.zip" -d "$TMP"
 
-[ -d "$SDK/platforms/android-37" ] || mv "$TMP/android-37" "$SDK/platforms/"
+SRC="$(find "$TMP" -maxdepth 1 -type d -name 'android-37*' | head -1)"
+[ -n "$SRC" ] || { ls -la "$TMP"; exit 1; }
+[ -d "$SDK/platforms/android-37" ] || mv "$SRC" "$SDK/platforms/android-37"
 
 cat > "$SDK/licenses/android-sdk-license" <<EOF
 8933bad161af4178b1185d1a37fbf41ea5269c55
