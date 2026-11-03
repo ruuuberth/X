@@ -65,10 +65,15 @@ jobs:
             echo "sin keystore secret: build firmado con debug keystore efímero"
           fi
 
+      - name: Gradle (distro en el runner)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.8.2'
+
       - name: Gradle assembleDebug
         run: |
           cd android
-          ./gradlew :app:assembleDebug --stacktrace
+          gradle :app:assembleDebug --stacktrace
 
       - name: Empaquetar platforms/android-36 (recurso para builds locales nube-bloqueados)
         run: |

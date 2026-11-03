@@ -14,6 +14,12 @@ mkdir -p android/app/src/main/jniLibs/arm64-v8a
 cp -f target/aarch64-linux-android/release/libxjni.so android/app/src/main/jniLibs/arm64-v8a/
 
 cd android
-./gradlew :app:assembleDebug -Pandroid.aapt2FromMavenOverride="$PREFIX/bin/aapt2" "$@"
-
-echo "APK: $ROOT/android/app/build/outputs/apk/debug/app-debug.apk"
+# Gradle local solo si el usuario lo instaló manualmente (CDN limitado en Termux);
+# el path oficial para APK es CI: git push && gh run watch
+if command -v gradle >/dev/null 2>&1; then
+  gradle :app:assembleDebug -Pandroid.aapt2FromMavenOverride="$PREFIX/bin/aapt2" "$@"
+  echo "APK: $ROOT/android/app/build/outputs/apk/debug/app-debug.apk"
+else
+  echo "Rust .so listo en android/app/src/main/jniLibs/arm64-v8a/"
+  echo "El APK se construye en CI: git push && gh run watch (develop)"
+fi

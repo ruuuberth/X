@@ -44,10 +44,15 @@ jobs:
           keyPassword=$KS_PASS
           EOF
 
+      - name: Gradle (distro en el runner)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.8.2'
+
       - name: Gradle assembleRelease
         run: |
           cd android
-          ./gradlew :app:assembleRelease --stacktrace
+          gradle :app:assembleRelease --stacktrace
 
       - name: Tag desde versionName
         id: ver
