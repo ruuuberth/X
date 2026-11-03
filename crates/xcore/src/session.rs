@@ -84,9 +84,8 @@ fn parse_cookies(raw: &str) -> Result<Cookies> {
 }
 
 fn validate(c: &Cookies) -> Result<()> {
-    let hex_ok = |s: &str| {
-        s.len() >= 20 && s.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '%')
-    };
+    let hex_ok =
+        |s: &str| s.len() >= 20 && s.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '%');
     if !hex_ok(&c.auth_token) {
         return Err(Error::InvalidCookies {
             reason: "auth_token ausente o raro (esperado ~40 caracteres alfanuméricos)".into(),
@@ -104,13 +103,15 @@ fn validate(c: &Cookies) -> Result<()> {
 mod tests {
     use super::*;
 
-    const RAW: &str =
-        r#"auth_token=a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0; ct0=98f5c67f183f8765e1b96a4e5a3e1c4a"#;
+    const RAW: &str = r#"auth_token=a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0; ct0=98f5c67f183f8765e1b96a4e5a3e1c4a"#;
 
     #[test]
     fn paste_cookie_header() {
         let s = Session::from_pasted(RAW).unwrap();
-        assert_eq!(s.cookies.auth_token, "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0");
+        assert_eq!(
+            s.cookies.auth_token,
+            "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"
+        );
         assert_eq!(s.cookies.ct0, "98f5c67f183f8765e1b96a4e5a3e1c4a");
     }
 

@@ -1,8 +1,9 @@
-//! Registro de operaciones GraphQL de x.com.
+//! Registro de operaciones GraphQL de x.com (esquema 2).
 //!
-//! Los `queryId` rotan sin aviso. Este módulo carga el registro embebido
-//! (`endpoints.json`) y permite override por archivo externo (app dir) y,
-//! en P6, auto-descubrimiento scrapeando el bundle JS de la web.
+//! Los `queryId` rotan sin aviso: DEFENSAS
+//! 1. `query_id` sembrados verificados en el día (origen público twscrape-update).
+//! 2. P6: extractor del JS bundle de x.com que refresca el registro en caliente
+//!    (override externo `endpoints.json` en el app dir > embebido).
 
 use std::collections::HashMap;
 
@@ -10,7 +11,7 @@ use serde::Deserialize;
 
 use crate::errors::{Error, Result};
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum OpKind {
     Get,
@@ -20,63 +21,77 @@ pub enum OpKind {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Operation {
     pub kind: OpKind,
-    /// URL con `%QUERY_ID%` placeholder.
-    pub path: String,
-    pub query_id: Option<String>,
+    pub query_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct Registry {
     pub schema: u8,
+    /// Bearer público del cliente web (no es secreto; va en `authorization`).
+    pub web_bearer: String,
+    #[serde(default = "default_base")]
+    pub graphql_base: String,
     pub ops: HashMap<String, Operation>,
-    /// Mapa de features (se serializa como `variables.features`).
-    pub features_union: serde_json::Map<String, serde_json::Value>,
+    /// features comunes (se fusiona con extras por operación).
+    pub features_base: serde_json::Map<String, serde_json::Value>,
 }
 
-/// Registro embebido (fallback si no hay archivo externo actualizado).
+fn default_base() -> String {
+    "https://x.com/i/api/graphql".into()
+}
+
 pub const DEFAULT_REGISTRY_JSON: &str = include_str!("../endpoints.json");
 
-/// Carga el registro embebido.
 pub fn default_registry() -> Result<Registry> {
     parse(DEFAULT_REGISTRY_JSON)
 }
 
-/// Carga un registro desde un archivo externo (app dir) si existe.
 pub fn load_external(path: &std::path::Path) -> Option<Registry> {
-    std::fs::read_to_string(path).ok().and_then(|s| parse(&s).ok())
+    std::fs::read_to_string(path)
+        .map(|s| parse(&s).ok())
+        .ok()
+        .flatten()
 }
 
 pub fn parse(json: &str) -> Result<Registry> {
-    let reg: Registry = serde_json::from_str(json).map_err(|e| {
-        Error::UnexpectedPayload {
-            op: "registry".into(),
-            detail: format!("endpoints.json inválido: {e}"),
-        }
+    let reg: Registry = serde_json::from_str(json).map_err(|e| Error::UnexpectedPayload {
+        op: "registry".into(),
+        detail: format!("endpoints.json inválido: {e}"),
     })?;
-    if reg.schema != 1 {
+    if reg.schema < 2 {
         return Err(Error::UnexpectedPayload {
             op: "registry".into(),
-            detail: format!("schema inesperado: {}", reg.schema),
+            detail: format!("schema viejo: {}", reg.schema),
         });
     }
     Ok(reg)
 }
 
 impl Registry {
-    /// URL final del endpoint para una operación, con el queryId actual.
+    /// URL `{base}/{query_id}/{op}` para una operación.
     pub fn url_for(&self, op: &str) -> Result<(String, OpKind)> {
         let o = self.ops.get(op).ok_or_else(|| Error::UnexpectedPayload {
             op: "registry".into(),
             detail: format!("operación desconocida: {op}"),
         })?;
-        let qid = o
-            .query_id
-            .as_deref()
-            .ok_or_else(|| Error::EndpointStale { op: op.into() })?;
-        Ok((o.path.replace("%QUERY_ID%", qid), o.kind.clone()))
+        let url = format!("{}/{}/{}", self.graphql_base, o.query_id, op);
+        Ok((url, o.kind))
     }
 
-    /// Marca/actualiza el queryId de una operación (usado por el extractor P6).
+    /// Fusiona `features_base` con extras propios de la operación.
+    pub fn features_for(
+        &self,
+        extras: Option<&serde_json::Map<String, serde_json::Value>>,
+    ) -> serde_json::Map<String, serde_json::Value> {
+        let mut all = self.features_base.clone();
+        if let Some(x) = extras {
+            for (k, v) in x.iter() {
+                all.insert(k.clone(), v.clone());
+            }
+        }
+        all
+    }
+
     pub fn set_query_id(&mut self, op: &str, qid: impl Into<String>) -> Result<()> {
         self.ops
             .get_mut(op)
@@ -84,17 +99,9 @@ impl Registry {
                 op: "registry".into(),
                 detail: format!("operación desconocida: {op}"),
             })?
-            .query_id = Some(qid.into());
+            .query_id = qid.into();
         Ok(())
     }
-}
-
-/// Extrae el queryId de una URL tipo `https://x.com/i/api/graphql/{id}/{Op?variables=...}`.
-pub fn stash_query_id_from_url(url: &str) -> Option<(&str, &str)> {
-    let rest = url.split("/i/api/graphql/").nth(1)?;
-    let (qid, op) = rest.split_once('/')?;
-    let op = op.split('?').next()?;
-    Some((op, qid))
 }
 
 #[cfg(test)]
@@ -102,32 +109,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn embedded_registry_parses() {
+    fn embedded_registry_new_schema() {
         let reg = default_registry().unwrap();
-        assert!(reg.ops.contains_key("Viewer"));
-        assert_eq!(reg.ops["Viewer"].kind, OpKind::Get);
-        // query_id sin asentar todavía → EndpointStale es el comportamiento esperado en P1 seed
-        assert!(matches!(
-            reg.url_for("Viewer"),
-            Err(Error::EndpointStale { .. })
-        ));
-    }
-
-    #[test]
-    fn set_and_get_query_id() {
-        let mut reg = default_registry().unwrap();
-        reg.set_query_id("Viewer", "ABCD1234").unwrap();
-        let (url, kind) = reg.url_for("Viewer").unwrap();
-        assert!(url.contains("graphql/ABCD1234/Viewer"));
+        assert_eq!(reg.schema, 2);
+        assert!(reg.web_bearer.starts_with("Bearer "));
+        let (url, kind) = reg.url_for("UserByScreenName").unwrap();
+        assert!(url.ends_with("UserByScreenName"));
+        assert!(url.contains("AMIBMjtxEEATh4z8V9GtRg"));
         assert_eq!(kind, OpKind::Get);
     }
 
     #[test]
-    fn url_scraper() {
-        let (op, qid) =
-            stash_query_id_from_url("https://x.com/i/api/graphql/XyZ_9/HomeTimeline?variables=..")
-                .unwrap();
-        assert_eq!(op, "HomeTimeline");
-        assert_eq!(qid, "XyZ_9");
+    fn features_merge() {
+        let reg = default_registry().unwrap();
+        let mut extra = serde_json::Map::new();
+        extra.insert("hidden_profile_likes_enabled".into(), true.into());
+        let ft = reg.features_for(Some(&extra));
+        assert_eq!(
+            ft.get("view_counts_everywhere_api_enabled"),
+            Some(&true.into())
+        );
+        assert_eq!(ft.get("hidden_profile_likes_enabled"), Some(&true.into()));
     }
 }

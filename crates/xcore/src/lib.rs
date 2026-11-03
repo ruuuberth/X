@@ -7,11 +7,13 @@
 //! - [`endpoints`]: registro de operaciones GraphQL (queryIds rotan; se auto-descubre en P6)
 //! - [`models`]: modelos serde tolerantes (`#[serde(default)]`, aliases)
 //! - [`session`]: sesión por cookies (`auth_token` + `ct0`) con persistencia
+//! - [`graphql`]: cliente GraphQL con headers web (bearer + csrf + cookies)
 //!
 //! Fase actual: **P1** — login por cookies, `me()`, `UserTweets`.
 
 pub mod endpoints;
 pub mod errors;
+pub mod graphql;
 pub mod models;
 pub mod session;
 

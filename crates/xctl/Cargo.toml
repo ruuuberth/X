@@ -1,0 +1,11 @@
+[package]
+name = "xctl"
+version = "0.2.0"
+edition = "2021"
+description = "Harness CLI de desarrollo: login por cookies pegadas y captura de fixtures live de x.com (corre en el device; las cookies nunca salen de él)"
+license = "MIT"
+
+[dependencies]
+xcore = { path = "../xcore" }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }

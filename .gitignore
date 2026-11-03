@@ -15,3 +15,8 @@ android/app/src/main/jniLibs/
 # --- Varios ---
 .DS_Store
 *.log
+
+# --- Harness: fixtures live (payloads reales con datos personales — nunca al repo) ---
+/fixtures/
+fixtures/
+.xctl/

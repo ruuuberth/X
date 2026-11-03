@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/xcore", "crates/x-jni"]
+members = ["crates/xcore", "crates/x-jni", "crates/xctl"]
 
 [profile.release]
 strip = true
